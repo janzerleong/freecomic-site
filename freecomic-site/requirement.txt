@@ -1,6 +1,0 @@
-beautifulsoup4
-feedparser
-requests
-Pillow
-schedule
-psutil
