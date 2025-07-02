@@ -1,9 +1,9 @@
-name: Generate & Deploy Site
+name: Generate Static & Deploy
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/30 * * * *'  # 每 30 分钟自动运行
+    - cron: '*/30 * * * *'  # 每 30 分钟自动运行一次
 
 jobs:
   build:
@@ -13,37 +13,40 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install -r freecomic-site/requirements.txt
+        run: pip install -r requirements.txt
 
       - name: Run crawler
-        run: python freecomic-site/new_crawler.py
+        run: python new_crawler.py
 
-      - name: Upload site artifact
+      - name: Archive site
         uses: actions/upload-artifact@v4
         with:
           name: site-static
-          path: freecomic-site/output/
+          path: output
 
   deploy:
     needs: build
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download site artifact
+      - name: Download site
         uses: actions/download-artifact@v4
         with:
           name: site-static
           path: site
 
       - name: Deploy to Server via SCP
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SERVER_SSH_KEY }}
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_rsa
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          scp -o StrictHostKeyChecking=no -r site/* root@142.171.235.178:/www/wwwroot/freecomic.website/
+          ssh -o StrictHostKeyChecking=no root@142.171.235.178 "mkdir -p /www/wwwroot/freecomic.website"
+          scp -r site/* root@142.171.235.178:/www/wwwroot/freecomic.website/
