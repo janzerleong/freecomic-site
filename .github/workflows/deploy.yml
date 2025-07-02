@@ -1,0 +1,49 @@
+name: Generate & Deploy Site
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/30 * * * *'  # 每30分钟自动跑一次
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run crawler
+        run: python new_crawler.py
+
+      - name: Archive output
+        uses: actions/upload-artifact@v3
+        with:
+          name: site-static
+          path: output
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download output
+        uses: actions/download-artifact@v3
+        with:
+          name: site-static
+          path: site
+
+      - name: Deploy to VPS via SCP
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SERVER_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          scp -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa -r site/* root@142.171.235.178:/www/wwwroot/freecomic.website/
