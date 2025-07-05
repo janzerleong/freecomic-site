@@ -19,6 +19,47 @@ from queue import Queue
 from PIL import Image
 import io
 
+# 创建必要的目录
+try:
+    os.makedirs("logs", exist_ok=True)  # 创建日志目录
+    os.makedirs("database", exist_ok=True)  # 创建数据库目录
+except Exception as e:
+    print(f"Warning: Failed to create directories: {str(e)}")
+
+# 配置区
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# 创建日志目录（如果在 GitHub Actions 中运行）
+LOG_DIR = os.path.join(BASE_DIR, 'logs')
+os.makedirs(LOG_DIR, exist_ok=True)
+LOG_FILE = os.path.join(LOG_DIR, 'crawler.log')
+
+# 确保日志文件所在目录存在
+try:
+    if not os.path.exists(os.path.dirname(LOG_FILE)):
+        os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+except Exception as e:
+    print(f"Warning: Failed to create log directory: {str(e)}")
+    # 如果无法创建日志目录，使用当前目录
+    LOG_FILE = 'crawler.log'
+
+# 配置日志
+try:
+    logging.basicConfig(
+        filename=LOG_FILE,
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        encoding='utf-8'
+    )
+except Exception as e:
+    print(f"Warning: Failed to configure logging: {str(e)}")
+    # 如果日志配置失败，使用基本配置
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+
+logger = logging.getLogger('NewsCrawler')
+
 # 配置区
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # 修改为您的网站实际目录
