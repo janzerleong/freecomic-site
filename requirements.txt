@@ -1,6 +1,6 @@
-requests
 feedparser
+requests
 beautifulsoup4
-schedule
-psutil
-pillow
+lxml
+tqdm
+python-dateutil
