@@ -27,7 +27,7 @@ jobs:
       - name: Run crawler
         run: python new_crawler.py
 
-      - name: Archive site
+      - name: Archive output folder
         uses: actions/upload-artifact@v4
         with:
           name: site-static
@@ -38,14 +38,19 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download site
+      - name: Download output artifact
         uses: actions/download-artifact@v4
         with:
           name: site-static
           path: site
 
-      - name: Deploy to Server
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan 142.171.235.178 >> ~/.ssh/known_hosts
+
+      - name: Deploy to aapanel server
         run: |
           scp -r site/* root@142.171.235.178:/www/wwwroot/freecomic.website/
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.SERVER_SSH_KEY }}
