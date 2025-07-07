@@ -5,3 +5,4 @@ lxml
 tqdm
 python-dateutil
 schedule
+psutil
