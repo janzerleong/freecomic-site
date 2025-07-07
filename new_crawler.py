@@ -18,6 +18,7 @@ import concurrent.futures
 from queue import Queue
 from PIL import Image
 import io
+import json
 
 # 创建必要的目录
 try:
@@ -71,6 +72,15 @@ DB_PATH = os.path.join(BASE_DIR, 'database', 'news.db')
 LOG_DIR = os.path.join(BASE_DIR, 'logs')
 LOG_FILE = os.path.join(LOG_DIR, 'crawler.log')
 DEFAULT_IMAGE = os.path.join(IMAGE_DIR, 'default.jpg')
+
+# 添加输出目录配置
+OUTPUT_DIR = os.path.join(BASE_DIR, 'output')
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# 输出文件路径
+INDEX_FILE = os.path.join(OUTPUT_DIR, 'index.html')
+MOBILE_FILE = os.path.join(OUTPUT_DIR, 'mobile_news.html') 
+DATA_FILE = os.path.join(OUTPUT_DIR, 'data.json')
 
 # 网站基本信息
 SITE_NAME = "国际时报刊"
@@ -412,212 +422,66 @@ def extract_image_from_content(url, soup):
         logger.error(f"提取图片URL失败: {url}: {str(e)}")
         return None
 
-def fetch_and_store():
-    conn = get_db_connection()
-    cur = conn.cursor()
-    new_articles = 0
+def save_data_file(articles):
+    """保存抓取的原始数据为JSON"""
     try:
-        for rss_url in RSS_FEEDS:
-            print(f"\n正在抓取RSS源: {rss_url}")
-            logger.info(f"开始抓取 RSS 源: {rss_url}")
-            try:
-                feed = feedparser.parse(rss_url)
-                if not feed.entries:
-                    print(f"警告: 未找到文章 - {rss_url}")
-                    logger.warning(f"未找到条目: {rss_url}")
-                    continue
-                    
-                print(f"找到 {len(feed.entries)} 篇文章")
-                for entry in feed.entries:
-                    title = entry.get('title', '无标题')
-                    summary = entry.get('summary', '无摘要')
-                    url = entry.link
-                    img_url = ""
-                    
-                    # 获取图片URL
-                    if 'media_content' in entry and entry.media_content:
-                        for media in entry.media_content:
-                            if media.get('type', '').startswith('image/'):
-                                img_url = media['url']
-                                break
-                    elif 'enclosures' in entry and entry.enclosures:
-                        for enc in entry.enclosures:
-                            if enc.get('type', '').startswith('image/'):
-                                img_url = enc['href']
-                                break
-                                
-                    hash_val = calculate_hash(title + url)
-                    try:
-                        # 检查是否存在完全相同的文章
-                        cur.execute("SELECT id FROM articles WHERE hash = ?", (hash_val,))
-                        if cur.fetchone() is not None:
-                            print(f"文章已存在: {title}")
-                            continue
-                            
-                        # 检查是否存在相似文章
-                        if is_similar_article(title, summary, conn):
-                            print(f"发现相似文章，跳过: {title}")
-                            logger.info(f"发现相似文章，跳过: {title}")
-                            continue
-                            
-                        # 插入新文章
-                        cur.execute(
-                            "INSERT INTO articles (title, summary, url, img_url, hash) VALUES (?, ?, ?, ?, ?)",
-                            (title, summary, url, img_url, hash_val)
-                        )
-                        new_articles += 1
-                        print(f"新增文章: {title}")
-                        logger.info(f"新增文章: {title}")
-                    except sqlite3.IntegrityError:
-                        print(f"文章已存在: {title}")
-                    except Exception as e:
-                        print(f"错误: 数据库插入失败 - {title}")
-                        logger.error(f"数据库插入失败: {title}: {str(e)}")
-                        
-            except Exception as e:
-                print(f"错误: 抓取RSS源失败 - {rss_url}")
-                logger.error(f"抓取RSS源失败: {rss_url}: {str(e)}")
-                continue
-                
-        conn.commit()
-        print(f"\n抓取完成, 新增 {new_articles} 篇文章")
-        logger.info(f"抓取完成, 新增 {new_articles} 篇文章")
+        data = {
+            'site_name': SITE_NAME,
+            'update_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'articles': articles
+        }
+        with open(DATA_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        logger.info(f"数据文件已保存: {DATA_FILE}")
     except Exception as e:
-        print(f"错误: 抓取过程中发生错误")
-        logger.error(f"抓取过程中发生错误: {str(e)}")
-    finally:
-        conn.close()
-    return new_articles
+        logger.error(f"保存数据文件失败: {str(e)}")
 
-class ArticleProcessor:
-    def __init__(self, max_workers=5):
-        self.max_workers = max_workers
-        self.article_queue = Queue()
-        self.processed_count = 0
-        self.error_count = 0
-        self.lock = threading.Lock()
-        
-    def process_article(self, article_data):
-        """处理单篇文章"""
-        try:
-            article_id, title, url, img_url = article_data
-            print(f"\n处理文章: {title}")
-            print(f"URL: {url}")
-            
-            # 获取文章内容
-            full_text = fetch_url_content(url)
-            if not full_text:
-                print(f"警告: 无法获取内容 - {url}")
-                logger.warning(f"无法获取内容: {url}")
-                return False
-                
-            print("成功获取文章内容")
-            
-            # 处理图片
-            if not img_url:
-                print("尝试从文章内容中提取图片...")
-                soup = BeautifulSoup(requests.get(url, headers={'User-Agent': random.choice(USER_AGENTS)}).text, 'html.parser')
-                img_url = extract_image_from_content(url, soup)
-                
-            if img_url:
-                print("开始下载图片...")
-                local_img_url = download_image(img_url, article_id)
-                print(f"图片下载完成: {local_img_url}")
-            else:
-                local_img_url = '/images/default.jpg'
-                print("使用默认图片")
-            
-            # 生成HTML文件
-            print("生成HTML文件...")
-            html_content = generate_article_html(title, full_text, local_img_url, article_id)
-            
-            file_path = os.path.join(NEWS_DIR, f"{article_id}.html")
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(html_content)
-                
-            print(f"HTML文件生成成功: {file_path}")
-            
-            with self.lock:
-                self.processed_count += 1
-                
-            return True
-            
-        except Exception as e:
-            print(f"错误: 处理文章失败 - {title}")
-            logger.error(f"处理文章失败: ID {article_id}: {str(e)}")
-            with self.lock:
-                self.error_count += 1
-            return False
-            
-    def worker(self):
-        """工作线程"""
-        while True:
-            try:
-                article_data = self.article_queue.get(timeout=1)
-                if article_data is None:
-                    break
-                self.process_article(article_data)
-                self.article_queue.task_done()
-            except Queue.Empty:
-                continue
-            except Exception as e:
-                logger.error(f"工作线程错误: {str(e)}")
-                continue
-                
-    def process_articles(self, articles):
-        """并发处理文章"""
-        # 创建工作线程
-        threads = []
-        for _ in range(self.max_workers):
-            t = threading.Thread(target=self.worker)
-            t.start()
-            threads.append(t)
-            
-        # 添加文章到队列
+def generate_mobile_page(articles):
+    """生成移动端页面"""
+    try:
+        mobile_blocks = []
         for article in articles:
-            self.article_queue.put(article)
+            article_id, title, summary, img_url = article
+            # 移动端样式的文章块
+            block = f"""
+            <div class="mobile-news-item">
+                <h3><a href="{SITE_URL}/news/{article_id}.html">{title}</a></h3>
+                <div class="mobile-news-summary">{summary}</div>
+            </div>
+            """
+            mobile_blocks.append(block)
             
-        # 等待所有文章处理完成
-        self.article_queue.join()
+        mobile_html = f"""
+        <!DOCTYPE html>
+        <html lang="zh-CN">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>{SITE_NAME} - 移动版</title>
+            <style>
+                body {{ padding: 10px; margin: 0; font-family: system-ui; }}
+                .mobile-news-item {{ padding: 15px; border-bottom: 1px solid #eee; }}
+                .mobile-news-item h3 {{ margin: 0 0 10px 0; }}
+                .mobile-news-item a {{ color: #333; text-decoration: none; }}
+                .mobile-news-summary {{ color: #666; font-size: 14px; }}
+            </style>
+        </head>
+        <body>
+            <h1 style="text-align:center;font-size:1.5em;">{SITE_NAME}</h1>
+            {''.join(mobile_blocks)}
+            <footer style="text-align:center;padding:20px;color:#999;">
+                <p>更新时间: {time.strftime('%Y-%m-%d %H:%M:%S')}</p>
+            </footer>
+        </body>
+        </html>
+        """
         
-        # 停止工作线程
-        for _ in range(self.max_workers):
-            self.article_queue.put(None)
-        for t in threads:
-            t.join()
-            
-        return self.processed_count, self.error_count
-
-def process_unprocessed_articles():
-    """处理未处理的文章，使用并发处理"""
-    conn = get_db_connection()
-    cur = conn.cursor()
-    try:
-        cur.execute("SELECT id, title, url, img_url FROM articles WHERE full_generated = 0 ORDER BY created_at DESC")
-        articles = cur.fetchall()
-        if not articles:
-            logger.info("没有需要处理的文章")
-            return 0
-            
-        logger.info(f"找到 {len(articles)} 篇需要处理的文章")
-        
-        # 创建处理器并处理文章
-        processor = ArticleProcessor(max_workers=MAX_CONCURRENT_REQUESTS)
-        processed_count, error_count = processor.process_articles(articles)
-        
-        # 更新数据库
-        if processed_count > 0:
-            cur.execute("UPDATE articles SET full_generated = 1 WHERE id IN (SELECT id FROM articles WHERE full_generated = 0 LIMIT ?)", (processed_count,))
-            conn.commit()
-            
-        logger.info(f"处理完成, 成功生成 {processed_count} 篇完整版文章, 失败 {error_count} 篇")
-        return processed_count
+        with open(MOBILE_FILE, 'w', encoding='utf-8') as f:
+            f.write(mobile_html)
+        logger.info(f"移动端页面已生成: {MOBILE_FILE}")
         
     except Exception as e:
-        logger.error(f"处理未处理文章时发生错误: {str(e)}")
-        return 0
-    finally:
-        conn.close()
+        logger.error(f"生成移动端页面失败: {str(e)}")
 
 def generate_homepage():
     """生成首页"""
@@ -638,6 +502,13 @@ def generate_homepage():
             logger.warning("没有可展示的文章")
             return False
             
+        # 保存原始数据
+        save_data_file(articles)
+        
+        # 生成移动端页面
+        generate_mobile_page(articles)
+        
+        # 生成PC端首页
         print(f"找到 {len(articles)} 篇文章用于首页展示")
         article_blocks = []
         for article in articles:
@@ -717,11 +588,19 @@ def generate_homepage():
                 f.write(html_content)
             print(f"首页更新成功: {index_path}")
             logger.info(f"首页更新成功: {index_path}")
-            return True
         except Exception as e:
             print(f"错误: 写入首页文件失败 - {str(e)}")
             logger.error(f"写入首页文件失败: {str(e)}")
             return False
+        
+        # 同时保存到output目录
+        try:
+            shutil.copy2(index_path, INDEX_FILE)
+            logger.info(f"首页已复制到输出目录: {INDEX_FILE}")
+        except Exception as e:
+            logger.error(f"复制首页到输出目录失败: {str(e)}")
+            
+        return True
             
     except Exception as e:
         print(f"错误: 更新首页失败")
@@ -950,6 +829,202 @@ def init_directories():
     except Exception as e:
         print(f"初始化目录结构失败: {str(e)}")
         return False
+
+def fetch_and_store():
+    """抓取并存储新闻文章
+    
+    Returns:
+        int: 新增的文章数量
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+    new_articles = 0
+    
+    try:
+        # 遍历所有RSS源
+        for rss_url in RSS_FEEDS:
+            try:
+                feed = feedparser.parse(rss_url)
+                if not feed.entries:
+                    logger.warning(f"No entries found in feed: {rss_url}")
+                    continue
+                    
+                # 处理每篇文章
+                for entry in feed.entries:
+                    title = entry.get('title', '').strip()
+                    summary = entry.get('summary', '').strip()
+                    url = entry.get('link', '').strip()
+                    
+                    # 提取图片URL
+                    img_url = None
+                    if 'media_content' in entry:
+                        for media in entry.media_content:
+                            if media.get('type', '').startswith('image/'):
+                                img_url = media.get('url')
+                                break
+                                
+                    # 计算文章哈希值
+                    hash_val = calculate_hash(f"{title}{url}")
+                    
+                    # 检查文章是否已存在
+                    cur.execute("SELECT id FROM articles WHERE hash = ?", (hash_val,))
+                    if cur.fetchone():
+                        continue
+                        
+                    # 检查相似文章
+                    if is_similar_article(title, summary, conn):
+                        continue
+                    
+                    # 插入新文章
+                    try:
+                        cur.execute("""
+                            INSERT INTO articles (title, summary, url, img_url, hash)
+                            VALUES (?, ?, ?, ?, ?)
+                        """, (title, summary, url, img_url, hash_val))
+                        new_articles += 1
+                        logger.info(f"Added new article: {title}")
+                    except sqlite3.IntegrityError:
+                        continue
+                        
+            except Exception as e:
+                logger.error(f"Error processing feed {rss_url}: {str(e)}")
+                continue
+                
+        conn.commit()
+        return new_articles
+        
+    except Exception as e:
+        logger.error(f"Error in fetch_and_store: {str(e)}")
+        return 0
+    finally:
+        conn.close()
+
+def process_unprocessed_articles():
+    """处理未处理的文章
+    
+    使用多线程并发处理未生成完整页面的文章
+    
+    Returns:
+        int: 处理成功的文章数量
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    try:
+        # 获取未处理文章
+        cur.execute("""
+            SELECT id, title, url, img_url 
+            FROM articles 
+            WHERE full_generated = 0
+            ORDER BY created_at DESC
+        """)
+        articles = cur.fetchall()
+        
+        if not articles:
+            return 0
+            
+        # 创建线程池处理文章
+        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_CONCURRENT_REQUESTS) as executor:
+            future_to_article = {
+                executor.submit(process_article, article): article 
+                for article in articles
+            }
+            
+            processed_count = 0
+            for future in concurrent.futures.as_completed(future_to_article):
+                article = future_to_article[future]
+                try:
+                    if future.result():
+                        processed_count += 1
+                        # 更新文章状态
+                        cur.execute("""
+                            UPDATE articles 
+                            SET full_generated = 1 
+                            WHERE id = ?
+                        """, (article[0],))
+                except Exception as e:
+                    logger.error(f"Error processing article {article[1]}: {str(e)}")
+                    
+        conn.commit()
+        return processed_count
+        
+    except Exception as e:
+        logger.error(f"Error in process_unprocessed_articles: {str(e)}")
+        return 0
+    finally:
+        conn.close()
+
+def process_article(article_data):
+    """处理单篇文章
+    
+    Args:
+        article_data: 元组(id, title, url, img_url)
+    
+    Returns:
+        bool: 处理是否成功
+    """
+    article_id, title, url, img_url = article_data
+    
+    try:
+        # 获取文章内容
+        content = fetch_url_content(url)
+        if not content:
+            return False
+            
+        # 处理图片
+        if not img_url:
+            response = requests.get(url, headers={'User-Agent': random.choice(USER_AGENTS)})
+            soup = BeautifulSoup(response.text, 'html.parser')
+            img_url = extract_image_from_content(url, soup)
+            
+        local_img = download_image(img_url, article_id) if img_url else '/images/default.jpg'
+        
+        # 生成文章HTML
+        html_content = generate_article_html(title, content, local_img, article_id)
+        
+        # 保存文章
+        file_path = os.path.join(NEWS_DIR, f"{article_id}.html")
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write(html_content)
+            
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error processing article {title}: {str(e)}")
+        return False
+
+def generate_article_html(title, content, img_url, article_id):
+    """生成文章HTML页面
+    
+    Args:
+        title: 文章标题
+        content: 文章内容
+        img_url: 图片URL
+        article_id: 文章ID
+    
+    Returns:
+        str: 生成的HTML内容
+    """
+    return f"""
+    <!DOCTYPE html>
+    <html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>{title} - {SITE_NAME}</title>
+        <link rel="stylesheet" href="{SITE_URL}/css/style.css">
+    </head>
+    <body>
+        <div class="container">
+            <article class="article-container">
+                <h1>{title}</h1>
+                <img class="article-image" src="{img_url}" alt="{title}">
+                <div class="article-content">{content}</div>
+            </article>
+        </div>
+    </body>
+    </html>
+    """
 
 def run_crawler():
     """运行爬虫任务，添加错误恢复机制"""
