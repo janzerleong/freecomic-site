@@ -1,9 +1,9 @@
 name: Generate Static & Deploy
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:        # 手动触发支持
   schedule:
-    - cron: '*/30 * * * *'  # 每 30 分钟运行一次
+    - cron: '0 */3 * * *'   # 每3小时自动运行一次
 
 jobs:
   build:
@@ -19,15 +19,18 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-      - name: Ensure logs directory exists
-        run: mkdir -p logs
+      - name: Ensure required folders
+        run: |
+          mkdir -p logs output news images css database
 
-      - name: Run crawler
+      - name: Run crawler once
         run: python new_crawler.py
 
-      - name: Archive output folder
+      - name: Archive site output
         uses: actions/upload-artifact@v4
         with:
           name: site-static
@@ -38,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download output artifact
+      - name: Download site artifact
         uses: actions/download-artifact@v4
         with:
           name: site-static
@@ -49,8 +52,8 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan 142.171.235.178 >> ~/.ssh/known_hosts
+          ssh-keyscan -H 142.171.235.178 >> ~/.ssh/known_hosts
 
-      - name: Deploy to aapanel server
+      - name: Deploy to Server via SCP
         run: |
-          scp -r site/* root@142.171.235.178:/www/wwwroot/freecomic.website/
+          scp -o StrictHostKeyChecking=no -r site/* root@142.171.235.178:/www/wwwroot/freecomic.website/
