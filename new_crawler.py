@@ -1119,29 +1119,9 @@ def run_scheduler():
             time.sleep(30)  # 出错后等待30秒再继续
 
 def main():
-    print("\n" + "="*50)
-    print("启动爬虫调度器...")
-    print("程序将每5分钟执行一次爬虫任务")
-    print("每天凌晨3点执行完整清理")
-    print("按 Ctrl+C 可以停止程序")
-    print("="*50 + "\n")
-    
-    # 创建并启动调度器线程
-    scheduler_thread = threading.Thread(target=run_scheduler)
-    scheduler_thread.daemon = True
-    scheduler_thread.start()
-    
-    try:
-        # 保持主线程运行
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("\n程序已停止")
-        # 执行清理操作
-        try:
-            cleanup_old_files()
-        except:
-            pass
+    # 只执行一次抓取和保存
+    crawl_website()
+    save_to_database_or_html()
 
 if __name__ == "__main__":
     main()
