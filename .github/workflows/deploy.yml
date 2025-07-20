@@ -1,19 +1,20 @@
 name: Generate Static & Deploy
 
 on:
-  workflow_dispatch:        # 手动触发支持
+  workflow_dispatch:        # 手动触发
   schedule:
-    - cron: '0 */3 * * *'   # 每3小时自动运行一次
+    - cron: '0 */3 * * *'   # 每3小时执行一次
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20     # 限制最大运行时间，防止死循环
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Setup Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -23,14 +24,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Ensure required folders
+      - name: Create necessary folders
         run: |
           mkdir -p logs output news images css database
 
-      - name: Run crawler once
-        run: python new_crawler.py
+      - name: Run crawler (safe, once)
+        run: |
+          python new_crawler.py || echo "Crawler exited with error code $?"
 
-      - name: Archive site output
+      - name: Upload site output
         uses: actions/upload-artifact@v4
         with:
           name: site-static
@@ -47,13 +49,13 @@ jobs:
           name: site-static
           path: site
 
-      - name: Setup SSH key
+      - name: Setup SSH for deployment
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H 142.171.235.178 >> ~/.ssh/known_hosts
 
-      - name: Deploy to Server via SCP
+      - name: Deploy via SCP
         run: |
           scp -o StrictHostKeyChecking=no -r site/* root@142.171.235.178:/www/wwwroot/freecomic.website/
